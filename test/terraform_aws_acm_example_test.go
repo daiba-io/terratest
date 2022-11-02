@@ -1,0 +1,106 @@
+package test
+
+import (
+	"fmt"
+	"testing"
+
+	"github.com/gruntwork-io/terratest/modules/aws"
+	"github.com/gruntwork-io/terratest/modules/random"
+	"github.com/gruntwork-io/terratest/modules/terraform"
+	test_structure "github.com/gruntwork-io/terratest/modules/test-structure"
+	// "github.com/stretchr/testify/assert"
+)
+
+// An example of how to test the Terraform module in examples/terraform-aws-example using Terratest.
+func TestTerraformAwsAcmExample(t *testing.T) {
+	t.Parallel()
+
+	// Make a copy of the terraform module to a temporary directory. This allows running multiple tests in parallel
+	// against the same terraform module.
+	exampleFolder := test_structure.CopyTerraformFolderToTemp(t, "../", "examples/terraform-aws-acm-example")
+
+	// Give this EC2 Instance a unique ID for a name tag so we can distinguish it from any other EC2 Instance running
+	// in your AWS account
+	uniqueID := random.UniqueId()
+	hostedZoneName := "daiba-io-test.link"
+	webHostname := fmt.Sprintf("%s.%s", uniqueID, hostedZoneName)
+	webHostnameAlt := fmt.Sprintf("www.%s", webHostname)
+
+	// Pick a random AWS region to test in. This helps ensure your code works in all regions.
+	awsRegion := aws.GetRandomStableRegion(t, nil, nil)
+
+	rootFolder := ".."
+	terraformFolderRelativeToRoot := "examples/terraform-aws-acm-example"
+
+	tempTestFolder := test_structure.CopyTerraformFolderToTemp(t, rootFolder, terraformFolderRelativeToRoot)
+	planFilePath := fmt.Sprintf("%s/plan.txt", tempTestFolder)
+
+	// website::tag::1::Configure Terraform setting path to Terraform code, EC2 instance name, and AWS Region. We also
+	// configure the options with default retryable errors to handle the most common retryable errors encountered in
+	// terraform testing.
+	terraformOptions := terraform.WithDefaultRetryableErrors(t, &terraform.Options{
+		// The path to where our Terraform code is located
+		TerraformDir: exampleFolder,
+
+		Vars: map[string]interface{}{
+			"hosted_zone_name":  hostedZoneName,
+			"validation_domain": hostedZoneName,
+			"web_hostname":      webHostname,
+			"web_hostname_alts": []string{webHostnameAlt},
+		},
+
+		// Environment variables to set when running Terraform
+		EnvVars: map[string]string{
+			"AWS_DEFAULT_REGION": awsRegion,
+		},
+	})
+
+	// website::tag::4::At the end of the test, run `terraform destroy` to clean up any resources that were created
+	defer terraform.Destroy(t, terraformOptions)
+
+	// website::tag::2::Run `terraform init` and `terraform apply` and fail the test if there are any errors
+	terraform.Init(t, &terraform.Options{
+		TerraformDir: tempTestFolder,
+		Upgrade:      true,
+	})
+
+	terraform.Validate(t, &terraform.Options{
+		TerraformDir: tempTestFolder,
+	})
+
+	terraform.Plan(t, &terraform.Options{
+		TerraformDir: tempTestFolder,
+
+		Vars: map[string]interface{}{
+			"hosted_zone_name":  hostedZoneName,
+			"validation_domain": hostedZoneName,
+			"web_hostname":      webHostname,
+			"web_hostname_alts": []string{webHostnameAlt},
+		},
+
+		PlanFilePath: planFilePath,
+	})
+
+	terraform.Apply(t, terraform.WithDefaultRetryableErrors(t, &terraform.Options{
+		TerraformDir: tempTestFolder,
+		PlanFilePath: planFilePath,
+	}))
+
+	// Run `terraform output` to get the value of an output variable
+	// instanceID := terraform.Output(t, terraformOptions, "instance_id")
+
+	// aws.AddTagsToResource(t, awsRegion, instanceID, map[string]string{"testing": "testing-tag-value"})
+
+	// Look up the tags for the given Instance ID
+	// instanceTags := aws.GetTagsForEc2Instance(t, awsRegion, instanceID)
+
+	// website::tag::3::Check if the EC2 instance with a given tag and name is set.
+	// testingTag, containsTestingTag := instanceTags["testing"]
+	// assert.True(t, containsTestingTag)
+	// assert.Equal(t, "testing-tag-value", testingTag)
+
+	// Verify that our expected name tag is one of the tags
+	// nameTag, containsNameTag := instanceTags["Name"]
+	// assert.True(t, containsNameTag)
+	// assert.Equal(t, expectedName, nameTag)
+}
